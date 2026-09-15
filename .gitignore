@@ -39,3 +39,28 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local database (SQLite dev db should not be committed)
+*.db
+*.db-journal
+/prisma/*.db
+/prisma/*.db-journal
+
+# ---------------------------------------------------------------------
+# Research paper material — NOT part of the app; keep out of the repo
+# ---------------------------------------------------------------------
+sentinelai_paper*
+references.bib
+paper_assets_review/
+experiments/
+# document + LaTeX build formats
+*.tex
+*.pdf
+*.docx
+*.doc
+*.aux
+*.bbl
+*.blg
+*.toc
+*.out
+*.synctex.gz

@@ -1,0 +1,187 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── NextAuth required models ────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  conversations Conversation[]
+  interactions  AIInteraction[]
+  agentRuns     AgentRun[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Application models ───────────────────────────────────────────────────────
+
+// Chat conversations (AI Assistant tool)
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String    @default("New Conversation")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+// Individual messages within a conversation
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String   // "user" | "assistant"
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+// Record of all AI tool interactions (analyze, generate, debug, document)
+model AIInteraction {
+  id        String   @id @default(cuid())
+  userId    String
+  tool      String   // "analyze" | "generate" | "debug" | "document"
+  input     String   // JSON-encoded input
+  output    String   // JSON-encoded output
+  model     String   @default("")
+  durationMs Int     @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Multi-agent reliability: observability foundation (Step 2) ─────────────────
+
+// One execution of the agent graph (planner -> worker -> reviewer) for a task.
+model AgentRun {
+  id             String   @id @default(cuid())
+  userId         String? // nullable so CLI/experiment runs without auth can persist
+  task           String
+  status         String   @default("running") // "running" | "success" | "failed"
+  totalLatencyMs Int      @default(0)
+  totalTokens    Int      @default(0)
+  injectedFaults Int      @default(0) // faults deliberately injected (Step 6) — ground truth for detection rate
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user       User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events     TraceEvent[]
+  failures   FailureRecord[]
+  recoveries RecoveryRecord[]
+
+  @@index([userId])
+}
+
+// A single structured trace event emitted by one agent/tool/model step.
+model TraceEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  component String // "planner" | "worker:generate" | "reviewer" | ...
+  type      String // "plan" | "tool" | "review" | "error"
+  status    String   @default("success") // "success" | "error"
+  input     String // JSON-encoded input
+  output    String // JSON-encoded output
+  latencyMs Int      @default(0)
+  tokens    Int      @default(0)
+  timestamp DateTime @default(now())
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+}
+
+// A failure flagged by the detector and classified by the diagnoser (Step 4).
+model FailureRecord {
+  id                String   @id @default(cuid())
+  runId             String
+  component         String
+  failureType       String // exception | invalid_output | timeout | loop | low_quality | review_rejected
+  severity          String // critical | high | medium | low
+  signal            String // the concrete signal that triggered detection
+  description       String
+  category          String // diagnosis category
+  diagnosis         String // human-readable explanation
+  suggestedStrategy String // retry | prompt_repair | model_fallback | escalate
+  resolved          Boolean  @default(false) // set true after successful recovery (Step 5)
+  createdAt         DateTime @default(now())
+
+  run         AgentRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  recoveries  RecoveryRecord[]
+
+  @@index([runId])
+}
+
+// A recovery attempt by the RecoveryEngine against a failure (Step 5).
+model RecoveryRecord {
+  id         String   @id @default(cuid())
+  runId      String
+  failureId  String? // the FailureRecord this recovery targeted
+  strategy   String // retry | prompt_repair | model_fallback | escalate
+  attempts   Int      @default(0)
+  recovered  Boolean  @default(false)
+  escalated  Boolean  @default(false)
+  totalMs    Int      @default(0)
+  finalError String? // last error if recovery did not succeed
+  detail     String   @default("[]") // JSON attempt log
+  createdAt  DateTime @default(now())
+
+  run     AgentRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  failure FailureRecord? @relation(fields: [failureId], references: [id], onDelete: SetNull)
+
+  @@index([runId])
+  @@index([failureId])
+}
